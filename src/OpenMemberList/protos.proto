@@ -1,5 +1,6 @@
 syntax = "proto3";
 package memberlist;
+option csharp_namespace = "OpenMemberList";
 
 message Member {
   string id = 1;

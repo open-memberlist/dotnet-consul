@@ -30,8 +30,7 @@ namespace OpenMemberlist.Consul
         private readonly TimeSpan _refreshTtl; //this is the refresh rate of TTL, should be smaller than the above
 
         private readonly TimeSpan _serviceTtl; //this is how long the service is healthy without a ttl refresh
-
-        private string _consulLeaderKey;
+        
         private string _consulServiceInstanceId; //the specific instance id of this node in consul
 
         private string _consulServiceName; //name of the custer, in consul this means the name of the service
@@ -76,7 +75,7 @@ namespace OpenMemberlist.Consul
         {
             _cluster = cluster;
             var (host, port) = cluster.GetAddress();
-            var kinds = cluster.GetLabels();
+            _labels = cluster.GetLabels();
 
             await RegisterMemberAsync();
             StartUpdateTtlLoop();
@@ -151,7 +150,7 @@ namespace OpenMemberlist.Consul
                 }
             );
 
-            Member ToMember(ServiceEntry v)
+            static Member ToMember(ServiceEntry v)
             {
                 var member = new Member
                 {
@@ -160,7 +159,7 @@ namespace OpenMemberlist.Consul
                     Port = v.Service.Port
                 };
 
-                member.Kinds.AddRange(v.Service.Tags);
+                member.Labels.AddRange(v.Service.Tags);
 
                 return member;
             }
