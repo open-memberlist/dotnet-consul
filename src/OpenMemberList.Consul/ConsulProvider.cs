@@ -1,9 +1,4 @@
-﻿// -----------------------------------------------------------------------
-// <copyright file="ConsulProvider.cs" company="Asynkron AB">
-//      Copyright (C) 2015-2020 Asynkron AB All rights reserved
-// </copyright>
-// -----------------------------------------------------------------------
-
+﻿
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -12,6 +7,7 @@ using Consul;
 using JetBrains.Annotations;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using OpenMemberList;
 
 namespace OpenMemberlist.Consul
 {
@@ -23,7 +19,7 @@ namespace OpenMemberlist.Consul
     //Helper functionality: register, deregister and refresh TTL
 
     [PublicAPI]
-    public class ConsulProvider : IClusterProvider
+    public class ConsulProvider : IMemberListProvider
     {
         private readonly TimeSpan _blockingWaitTime;
         private readonly ConsulClient _client;
@@ -49,6 +45,7 @@ namespace OpenMemberlist.Consul
 
         private int _port;
         private bool _shutdown;
+        private IMemberListClient _cluster;
 
         public ConsulProvider(ConsulProviderConfig config) : this(config, clientConfiguration => { })
         {
@@ -75,22 +72,20 @@ namespace OpenMemberlist.Consul
         {
         }
 
-        public async Task StartMemberAsync(Cluster cluster)
+        public async Task StartMemberAsync(IMemberListClient cluster)
         {
-            var (host, port) = cluster.System.GetAddress();
-            var kinds = cluster.GetClusterKinds();
+            _cluster = cluster;
+            var (host, port) = cluster.GetAddress();
+            var kinds = cluster.GetLabels();
 
             await RegisterMemberAsync();
             StartUpdateTtlLoop();
             StartMonitorMemberStatusChangesLoop();
-            //   StartLeaderElectionLoop();
         }
 
-        public Task StartClientAsync(Cluster cluster)
+        public Task StartClientAsync(IMemberListClient cluster)
         {
-            var (host, port) = cluster.System.GetAddress();
-            SetState(cluster, cluster.Config.ClusterName, host, port, null, cluster.MemberList);
-
+            _cluster = cluster;
             StartMonitorMemberStatusChangesLoop();
 
             return Task.CompletedTask;
@@ -113,10 +108,10 @@ namespace OpenMemberlist.Consul
         
         private void StartMonitorMemberStatusChangesLoop()
         {
-            _ = SafeTask.Run(async () => {
+            _ = Task.Run(async () => {
                     var waitIndex = 0ul;
 
-                    while (!_shutdown && !_cluster.System.Shutdown.IsCancellationRequested)
+                    while (!_shutdown && !_cluster.Shutdown.IsCancellationRequested)
                     {
                         try
                         {
@@ -125,7 +120,7 @@ namespace OpenMemberlist.Consul
                                     WaitIndex = waitIndex,
                                     WaitTime = _blockingWaitTime
                                 }
-                                , _cluster.System.Shutdown
+                                , _cluster.Shutdown
                             );
                             if (_deregistered) break;
 
@@ -140,11 +135,11 @@ namespace OpenMemberlist.Consul
                                     .Select(ToMember)
                                     .ToArray();
                             
-                            _memberList.UpdateClusterTopology(currentMembers);
+                            _cluster.UpdateMembers(currentMembers);
                         }
                         catch (Exception x)
                         {
-                            if (!_cluster.System.Shutdown.IsCancellationRequested)
+                            if (!_cluster.Shutdown.IsCancellationRequested)
                             {
                                 _logger.LogError(x, "Consul Monitor failed");
 
@@ -171,17 +166,17 @@ namespace OpenMemberlist.Consul
             }
         }
 
-        private void StartUpdateTtlLoop() => _ = SafeTask.Run(async () => {
+        private void StartUpdateTtlLoop() => _ = Task.Run(async () => {
                 while (!_shutdown)
                 {
                     try
                     {
                         await _client.Agent.PassTTL("service:" + _consulServiceInstanceId, "");
-                        await Task.Delay(_refreshTtl, _cluster.System.Shutdown);
+                        await Task.Delay(_refreshTtl, _cluster.Shutdown);
                     }
                     catch (Exception x)
                     {
-                        if (!_cluster.System.Shutdown.IsCancellationRequested) _logger.LogError(x, "Consul TTL Loop failed");
+                        if (!_cluster.Shutdown.IsCancellationRequested) _logger.LogError(x, "Consul TTL Loop failed");
                     }
                 }
 
@@ -210,7 +205,7 @@ namespace OpenMemberlist.Consul
                     //if a node with host X and port Y, joins, then leaves, then joins again.
                     //we need a way to distinguish the new node from the old node.
                     //this is what this ID is for
-                    {"id", _cluster.System.Id}
+                    {"id", _cluster.Id}
                 }
             };
             await _client.Agent.ServiceRegister(s);
