@@ -1,0 +1,9 @@
+syntax = "proto3";
+package memberlist;
+
+message Member {
+  string id = 1;
+  string host = 2;
+  int32 port = 3;
+  repeated string labels = 4;
+}
